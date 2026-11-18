@@ -21,7 +21,9 @@
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSUIElement</key>
-	<true/>
+	<false/>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Lens shows your Downloads folder as a grid when you click its Dock icon.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Personal use.</string>
 </dict>

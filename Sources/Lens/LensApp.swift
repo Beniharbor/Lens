@@ -18,9 +18,17 @@ struct LensApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Menu-bar agent app: no dock icon (also set via LSUIElement in Info.plist).
-        NSApp.setActivationPolicy(.accessory)
+        // Regular app so Lens has a Dock icon: clicking it opens the Downloads
+        // grid (DownloadsStackController). The OCR menu-bar item is unchanged.
+        NSApp.setActivationPolicy(.regular)
+        DownloadsStackController.shared.applyDockIcon()
         OCRController.shared.registerHotkey()
+    }
+
+    /// Sent every time the Dock icon is clicked while Lens is running.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        DownloadsStackController.shared.toggle()
+        return false
     }
 }
 
@@ -57,6 +65,10 @@ private struct MenuContent: View {
         }
         .keyboardShortcut("c")
         KeyboardShortcuts.Recorder("Shortcut:", name: .captureText)
+        Divider()
+        Button("Reset Downloads Grid Size") {
+            DownloadsStackController.shared.resetSize()
+        }
         Divider()
         Button("Quit Lens") {
             NSApp.terminate(nil)
