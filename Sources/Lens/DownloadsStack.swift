@@ -1,5 +1,6 @@
 import AppKit
 @preconcurrency import Quartz
+import SwiftUI
 
 /// Grid window. Titled (with the title bar hidden) so it gets native edge
 /// resizing, rounded corners and shadow; still takes keyboard focus.
@@ -71,6 +72,8 @@ final class DownloadsStackController: NSObject, ObservableObject, DownloadsGridA
     private var backButton: NSButton!
     private var searchField: NSSearchField!
     private var pinButton: NSButton!
+    private var helpButton: NSButton!
+    private var helpPopover: NSPopover?
     private var sizePicker: NSSegmentedControl!
     private var sortPopUp: NSPopUpButton!
 
@@ -340,6 +343,14 @@ final class DownloadsStackController: NSObject, ObservableObject, DownloadsGridA
         pinButton.toolTip = "Keep the grid open while you work in other apps"
         self.pinButton = pinButton
 
+        let helpButton = NSButton(
+            image: NSImage(systemSymbolName: "questionmark.circle", accessibilityDescription: "Keyboard shortcuts")!,
+            target: self, action: #selector(toggleHelp)
+        )
+        helpButton.bezelStyle = .accessoryBarAction
+        helpButton.toolTip = "Keyboard shortcuts (⌘/)"
+        self.helpButton = helpButton
+
         // Grid
         let layout = NSCollectionViewFlowLayout()
         layout.itemSize = TileSize.current.tile
@@ -413,7 +424,7 @@ final class DownloadsStackController: NSObject, ObservableObject, DownloadsGridA
         let divider = NSBox()
         divider.boxType = .separator
 
-        let views: [NSView] = [title, backButton, searchField, pinButton, scrollView, emptyLabel,
+        let views: [NSView] = [title, backButton, searchField, helpButton, pinButton, scrollView, emptyLabel,
                                divider, sizePicker, finderButton, sortPopUp]
         for view in views {
             view.translatesAutoresizingMaskIntoConstraints = false
@@ -434,7 +445,9 @@ final class DownloadsStackController: NSObject, ObservableObject, DownloadsGridA
             backButton.centerYAnchor.constraint(equalTo: title.centerYAnchor),
             pinButton.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -10),
             pinButton.centerYAnchor.constraint(equalTo: title.centerYAnchor),
-            searchField.trailingAnchor.constraint(equalTo: pinButton.leadingAnchor, constant: -6),
+            helpButton.trailingAnchor.constraint(equalTo: pinButton.leadingAnchor, constant: -2),
+            helpButton.centerYAnchor.constraint(equalTo: title.centerYAnchor),
+            searchField.trailingAnchor.constraint(equalTo: helpButton.leadingAnchor, constant: -4),
             searchField.centerYAnchor.constraint(equalTo: title.centerYAnchor),
             searchField.widthAnchor.constraint(equalToConstant: 140),
 
@@ -789,6 +802,24 @@ final class DownloadsStackController: NSObject, ObservableObject, DownloadsGridA
             : "Keep the grid open while you work in other apps"
     }
 
+    // MARK: Help
+
+    func gridShowHelp() { toggleHelp() }
+
+    /// Popover listing every shortcut, anchored under the ? button.
+    @objc private func toggleHelp() {
+        if let helpPopover, helpPopover.isShown {
+            helpPopover.performClose(nil)
+            return
+        }
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.animates = !reduceMotion
+        popover.contentViewController = NSHostingController(rootView: ShortcutsHelpView())
+        popover.show(relativeTo: helpButton.bounds, of: helpButton, preferredEdge: .maxY)
+        helpPopover = popover
+    }
+
     // MARK: Icon size
 
     @objc private func sizePickerChanged(_ sender: NSSegmentedControl) {
@@ -937,6 +968,8 @@ final class DownloadsStackController: NSObject, ObservableObject, DownloadsGridA
             let sortItem = NSMenuItem(title: "Sort By", action: nil, keyEquivalent: "")
             sortItem.submenu = sortMenu()
             menu.addItem(sortItem)
+            menu.addItem(.separator())
+            add("Keyboard Shortcuts", #selector(toggleHelp), key: "/", modifiers: .command)
             return menu
         }
 

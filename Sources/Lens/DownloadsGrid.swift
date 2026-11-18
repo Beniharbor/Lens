@@ -340,6 +340,7 @@ protocol DownloadsGridActions: AnyObject {
     func gridResizeIcons(_ step: Int)
     /// Focus the search field, optionally typing `text` into it (type-to-search).
     func gridFocusSearch(typing text: String?)
+    func gridShowHelp()
     func gridContextMenu() -> NSMenu?
 }
 
@@ -374,6 +375,7 @@ final class DownloadsCollectionView: NSCollectionView, QLPreviewPanelDataSource,
         case 8 where cmd: actions.gridCopyFiles()                     // ⌘C
         case 8 where cmdShift: actions.gridCopyText()                 // ⌘⇧C
         case 3 where cmd: actions.gridFocusSearch(typing: nil)        // ⌘F
+        case 44 where cmd || cmdShift: actions.gridShowHelp()         // ⌘/ or ⌘?
         case 24 where cmd || cmdShift: actions.gridResizeIcons(+1)    // ⌘= / ⌘+
         case 27 where cmd: actions.gridResizeIcons(-1)                // ⌘-
         default:

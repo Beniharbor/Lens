@@ -53,6 +53,7 @@ files, then drag the selection into any app or folder.
 | ⌘F, or just start typing | Search the folder by name |
 | ⌘- / ⌘+ | Smaller / larger icons |
 | Esc | Clear the search, then close |
+| ⌘/ or the ? button | Show all shortcuts |
 
 **Right-click** a file for Open, Open With, Quick Look, Show in Finder, Copy,
 Copy Text, Rename, Compress and Move to Trash; right-click empty space for
