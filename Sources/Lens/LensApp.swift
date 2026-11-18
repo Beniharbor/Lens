@@ -5,10 +5,11 @@ import KeyboardShortcuts
 struct LensApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var controller = OCRController.shared
+    @StateObject private var grid = DownloadsStackController.shared
 
     var body: some Scene {
         MenuBarExtra {
-            MenuContent(controller: controller)
+            MenuContent(controller: controller, grid: grid)
         } label: {
             MenuBarLabel(controller: controller)
         }
@@ -21,7 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Regular app so Lens has a Dock icon: clicking it opens the Downloads
         // grid (DownloadsStackController). The OCR menu-bar item is unchanged.
         NSApp.setActivationPolicy(.regular)
-        DownloadsStackController.shared.applyDockIcon()
+        DownloadsStackController.shared.start()
         OCRController.shared.registerHotkey()
     }
 
@@ -53,6 +54,7 @@ private struct MenuBarLabel: View {
 
 private struct MenuContent: View {
     @ObservedObject var controller: OCRController
+    @ObservedObject var grid: DownloadsStackController
 
     var body: some View {
         Text(statusLine)
@@ -66,14 +68,43 @@ private struct MenuContent: View {
         .keyboardShortcut("c")
         KeyboardShortcuts.Recorder("Shortcut:", name: .captureText)
         Divider()
-        Button("Reset Downloads Grid Size") {
-            DownloadsStackController.shared.resetSize()
+        Menu("Dock Grid Folder") {
+            folderToggle("Downloads", .downloadsDirectory)
+            folderToggle("Desktop", .desktopDirectory)
+            folderToggle("Documents", .documentDirectory)
+            if !isStandardFolder(grid.rootFolder) {
+                Toggle(grid.rootFolderName, isOn: .constant(true))
+            }
+            Divider()
+            Button("Choose Folder…") {
+                grid.chooseRootFolder()
+            }
+        }
+        Button("Reset Dock Grid Size") {
+            grid.resetSize()
         }
         Divider()
         Button("Quit Lens") {
             NSApp.terminate(nil)
         }
         .keyboardShortcut("q")
+    }
+
+    private func folderURL(_ directory: FileManager.SearchPathDirectory) -> URL {
+        FileManager.default.urls(for: directory, in: .userDomainMask)[0]
+    }
+
+    private func isStandardFolder(_ url: URL) -> Bool {
+        [.downloadsDirectory, .desktopDirectory, .documentDirectory].contains { grid.isRootFolder(folderURL($0)) }
+    }
+
+    /// A checkmarked menu item; choosing it points the Dock grid at that folder.
+    private func folderToggle(_ title: String, _ directory: FileManager.SearchPathDirectory) -> some View {
+        let url = folderURL(directory)
+        return Toggle(title, isOn: Binding(
+            get: { grid.isRootFolder(url) },
+            set: { if $0 { grid.setRootFolder(url) } }
+        ))
     }
 
     private var statusLine: String {

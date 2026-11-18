@@ -24,6 +24,10 @@
 	<false/>
 	<key>NSDownloadsFolderUsageDescription</key>
 	<string>Lens shows your Downloads folder as a grid when you click its Dock icon.</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Lens shows your Desktop as a grid when you choose it as the Dock grid folder.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Lens shows your Documents folder as a grid when you choose it as the Dock grid folder.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Personal use.</string>
 </dict>

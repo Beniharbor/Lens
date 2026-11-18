@@ -1,4 +1,7 @@
 import AppKit
+import ImageIO
+import PDFKit
+import UniformTypeIdentifiers
 @preconcurrency import Vision
 import KeyboardShortcuts
 
@@ -69,40 +72,34 @@ final class OCRController: ObservableObject {
     }
 
     private func recognizeText(in cgImage: CGImage) {
-        let request = VNRecognizeTextRequest { [weak self] request, error in
-            Task { @MainActor in
-                self?.handleRecognition(request: request, error: error)
-            }
-        }
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = true
-        request.automaticallyDetectsLanguage = true
-
-        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        Task {
             do {
-                try handler.perform([request])
+                deliver(try await Self.recognizeText(in: cgImage))
             } catch {
-                Task { @MainActor in
-                    self?.fail("Recognition failed: \(error.localizedDescription)")
-                }
+                fail("Recognition failed: \(error.localizedDescription)")
             }
         }
     }
 
-    private func handleRecognition(request: VNRequest, error: Error?) {
-        if let error {
-            fail("Recognition failed: \(error.localizedDescription)")
-            return
+    /// Copies the text in image or PDF files (from the Downloads grid) to
+    /// the clipboard, with the same feedback as a screen capture.
+    func copyText(fromFilesAt urls: [URL]) {
+        guard !urls.isEmpty, state != .capturing, state != .recognizing else { return }
+        state = .recognizing
+        Task {
+            var parts: [String] = []
+            for url in urls {
+                if let text = try? await Self.extractText(from: url), !text.isEmpty {
+                    parts.append(text)
+                }
+            }
+            deliver(parts.joined(separator: "\n\n"))
         }
-        guard let observations = request.results as? [VNRecognizedTextObservation], !observations.isEmpty else {
-            fail("No text found in selection")
-            return
-        }
+    }
 
-        let text = Self.orderedText(from: observations)
+    private func deliver(_ text: String) {
         guard !text.isEmpty else {
-            fail("No text found in selection")
+            fail("No text found")
             return
         }
 
@@ -117,10 +114,54 @@ final class OCRController: ObservableObject {
         scheduleReset()
     }
 
+    /// On-device Vision OCR, off the main thread.
+    nonisolated static func recognizeText(in cgImage: CGImage) async throws -> String {
+        try await Task.detached(priority: .userInitiated) {
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.usesLanguageCorrection = true
+            request.automaticallyDetectsLanguage = true
+            try VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([request])
+            let observations = request.results ?? []
+            return observations.isEmpty ? "" : orderedText(from: observations)
+        }.value
+    }
+
+    /// PDFs use their embedded text when they have it and fall back to OCR
+    /// for scans (first 20 pages); images go straight to OCR.
+    nonisolated static func extractText(from url: URL) async throws -> String {
+        if UTType(filenameExtension: url.pathExtension)?.conforms(to: .pdf) == true {
+            guard let document = PDFDocument(url: url) else { return "" }
+            if let embedded = document.string?.trimmingCharacters(in: .whitespacesAndNewlines), !embedded.isEmpty {
+                return embedded
+            }
+            var pages: [String] = []
+            for index in 0..<min(document.pageCount, 20) {
+                guard let page = document.page(at: index) else { continue }
+                let bounds = page.bounds(for: .mediaBox)
+                let image = page.thumbnail(of: NSSize(width: bounds.width * 2, height: bounds.height * 2), for: .mediaBox)
+                guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { continue }
+                let text = try await recognizeText(in: cgImage)
+                if !text.isEmpty { pages.append(text) }
+            }
+            return pages.joined(separator: "\n\n")
+        }
+
+        // A transformed thumbnail applies EXIF orientation (iPhone photos)
+        // and caps very large images at a size OCR still reads well.
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                  kCGImageSourceCreateThumbnailFromImageAlways: true,
+                  kCGImageSourceCreateThumbnailWithTransform: true,
+                  kCGImageSourceThumbnailMaxPixelSize: 4096,
+              ] as CFDictionary) else { return "" }
+        return try await recognizeText(in: cgImage)
+    }
+
     /// Vision doesn't guarantee top-to-bottom reading order, so cluster
     /// observations into lines by vertical position (normalized coordinates,
     /// origin bottom-left) and sort each line left-to-right.
-    private static func orderedText(from observations: [VNRecognizedTextObservation]) -> String {
+    nonisolated private static func orderedText(from observations: [VNRecognizedTextObservation]) -> String {
         let averageHeight = observations.map(\.boundingBox.height).reduce(0, +) / CGFloat(observations.count)
         let lineThreshold = max(averageHeight * 0.6, 0.01)
 

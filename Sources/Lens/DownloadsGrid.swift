@@ -1,17 +1,29 @@
 import AppKit
 @preconcurrency import Quartz
 import QuickLookThumbnailing
+import UniformTypeIdentifiers
 
-/// One file in ~/Downloads, as shown in the grid.
+/// One file in the grid's folder.
 struct DownloadsEntry: Equatable {
     let url: URL
     let name: String
+    let kind: String
+    let size: Int64? // nil for folders
     let dateAdded: Date
     let modified: Date
 
-    /// Newest first by Date Added — the Dock's default order for the Downloads stack.
+    /// Images and PDFs can be run through Lens's text recognition.
+    var supportsTextExtraction: Bool {
+        guard let type = UTType(filenameExtension: url.pathExtension) else { return false }
+        return type.conforms(to: .image) || type.conforms(to: .pdf)
+    }
+
+    /// Unsorted; the grid applies `GridSortOrder`.
     static func load(from folder: URL) -> [DownloadsEntry] {
-        let keys: [URLResourceKey] = [.addedToDirectoryDateKey, .creationDateKey, .contentModificationDateKey]
+        let keys: [URLResourceKey] = [
+            .addedToDirectoryDateKey, .creationDateKey, .contentModificationDateKey,
+            .localizedTypeDescriptionKey, .fileSizeKey, .isDirectoryKey,
+        ]
         guard let urls = try? FileManager.default.contentsOfDirectory(
             at: folder,
             includingPropertiesForKeys: keys,
@@ -23,11 +35,51 @@ struct DownloadsEntry: Equatable {
             return DownloadsEntry(
                 url: url,
                 name: FileManager.default.displayName(atPath: url.path),
+                kind: values?.localizedTypeDescription ?? "",
+                size: values?.isDirectory == true ? nil : values?.fileSize.map(Int64.init),
                 dateAdded: values?.addedToDirectoryDate ?? values?.creationDate ?? .distantPast,
                 modified: values?.contentModificationDate ?? .distantPast
             )
         }
-        .sorted { $0.dateAdded > $1.dateAdded }
+    }
+}
+
+/// Sort order for the grid, remembered across launches. Date Added (newest
+/// first) is the Dock's default for the Downloads stack.
+enum GridSortOrder: Int, CaseIterable {
+    case dateAdded, dateModified, name, kind, size
+
+    private static let defaultsKey = "gridSortOrder"
+
+    static var current: GridSortOrder {
+        get { GridSortOrder(rawValue: UserDefaults.standard.integer(forKey: defaultsKey)) ?? .dateAdded }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: defaultsKey) }
+    }
+
+    var title: String {
+        switch self {
+        case .dateAdded: return "Date Added"
+        case .dateModified: return "Date Modified"
+        case .name: return "Name"
+        case .kind: return "Kind"
+        case .size: return "Size"
+        }
+    }
+
+    func sorted(_ entries: [DownloadsEntry]) -> [DownloadsEntry] {
+        let byName: (DownloadsEntry, DownloadsEntry) -> Bool = {
+            $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
+        switch self {
+        case .dateAdded: return entries.sorted { $0.dateAdded > $1.dateAdded }
+        case .dateModified: return entries.sorted { $0.modified > $1.modified }
+        case .name: return entries.sorted(by: byName)
+        case .kind:
+            return entries.sorted {
+                $0.kind == $1.kind ? byName($0, $1) : $0.kind.localizedStandardCompare($1.kind) == .orderedAscending
+            }
+        case .size: return entries.sorted { ($0.size ?? -1) > ($1.size ?? -1) } // largest first, folders last
+        }
     }
 }
 
@@ -95,17 +147,41 @@ final class TileBackdropView: NSView {
     override func mouseEntered(with event: NSEvent) { isHovered = true }
     override func mouseExited(with event: NSEvent) { isHovered = false }
 
+    /// Blue dot on the icon's top-right corner for files added since the
+    /// grid was last opened.
+    var showsNewDot = false {
+        didSet { if oldValue != showsNewDot { needsDisplay = true } }
+    }
+    var iconSide: CGFloat = 60
+    var iconTopInset: CGFloat = 6
+
     override func draw(_ dirtyRect: NSRect) {
-        let color: NSColor
+        let color: NSColor?
         if isHighlighted {
             color = NSColor.controlAccentColor.withAlphaComponent(0.35)
         } else if isHovered {
             color = NSColor.labelColor.withAlphaComponent(0.08)
         } else {
-            return
+            color = nil
         }
-        color.setFill()
-        NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 2), xRadius: 8, yRadius: 8).fill()
+        if let color {
+            color.setFill()
+            NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 2), xRadius: 8, yRadius: 8).fill()
+        }
+
+        if showsNewDot {
+            let diameter: CGFloat = 10
+            let center = NSPoint(x: bounds.midX + iconSide / 2 - 3, y: bounds.maxY - iconTopInset - 3)
+            let dot = NSBezierPath(ovalIn: NSRect(
+                x: center.x - diameter / 2, y: center.y - diameter / 2,
+                width: diameter, height: diameter
+            ))
+            NSColor.controlAccentColor.setFill()
+            dot.fill()
+            NSColor.white.withAlphaComponent(0.9).setStroke()
+            dot.lineWidth = 1.5
+            dot.stroke()
+        }
     }
 }
 
@@ -212,9 +288,11 @@ final class DownloadsTile: NSCollectionViewItem {
         label.preferredMaxLayoutWidth = size.tile.width - 8
     }
 
-    func configure(with entry: DownloadsEntry, size: TileSize, scale: CGFloat) {
+    func configure(with entry: DownloadsEntry, size: TileSize, scale: CGFloat, isNew: Bool) {
         _ = view // make sure loadView has run before touching constraints
         if size != tileSize { apply(size) }
+        backdrop.iconSide = size.icon
+        backdrop.showsNewDot = isNew
         self.entry = entry
         label.stringValue = entry.name
         view.toolTip = entry.name
@@ -249,40 +327,69 @@ final class DownloadsTile: NSCollectionViewItem {
     }
 }
 
+/// Everything the grid can ask its controller to do.
+@MainActor
+protocol DownloadsGridActions: AnyObject {
+    func gridSelectedURLs() -> [URL]
+    func gridOpen()
+    func gridCancel()
+    func gridBack()
+    func gridTrash()
+    func gridCopyFiles()
+    func gridCopyText()
+    func gridResizeIcons(_ step: Int)
+    /// Focus the search field, optionally typing `text` into it (type-to-search).
+    func gridFocusSearch(typing text: String?)
+    func gridContextMenu() -> NSMenu?
+}
+
 /// NSCollectionView already provides Cmd-click, Shift-click, rubber-band
 /// selection, arrow keys and multi-item dragging. This subclass adds the
-/// Finder-style extras: double-click / Return to open, Space for Quick Look,
-/// Esc to close, ⌘A to select all.
+/// Finder-style extras: keyboard shortcuts, type-to-search, double-click to
+/// open, right-click menu and Quick Look.
 final class DownloadsCollectionView: NSCollectionView, QLPreviewPanelDataSource, QLPreviewPanelDelegate {
-    var selectedURLs: () -> [URL] = { [] }
-    var onOpen: (() -> Void)?
-    var onCancel: (() -> Void)?
-    var onBack: (() -> Void)?
-    var onResizeIcons: ((Int) -> Void)?
+    weak var actions: DownloadsGridActions?
 
     override var acceptsFirstResponder: Bool { true }
 
+    /// Lets a drag start on the first click even when Lens isn't the active
+    /// app (e.g. a pinned grid while you work in another app).
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
     override func keyDown(with event: NSEvent) {
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard let actions else { return super.keyDown(with: event) }
+        let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        let plain = flags.isEmpty
+        let cmd = flags == .command
+        let cmdShift = flags == [.command, .shift]
+
         switch event.keyCode {
-        case 53: // Esc
-            onCancel?()
-        case 36, 76: // Return, Enter
-            onOpen?()
-        case 49: // Space
-            toggleQuickLook()
-        case 125 where flags.contains(.command): // ⌘↓, like Finder
-            onOpen?()
-        case 126 where flags.contains(.command), 33 where flags == .command, 51: // ⌘↑, ⌘[, Delete
-            onBack?()
-        case 0 where flags == .command: // ⌘A (Lens has no Edit menu to route it)
-            selectAll(nil)
-        case 24 where flags.contains(.command): // ⌘= / ⌘+ — bigger icons, like Finder
-            onResizeIcons?(+1)
-        case 27 where flags.contains(.command): // ⌘- — smaller icons
-            onResizeIcons?(-1)
+        case 53 where plain: actions.gridCancel()                    // Esc
+        case 36 where plain, 76 where plain: actions.gridOpen()       // Return, Enter
+        case 125 where cmd: actions.gridOpen()                        // ⌘↓, like Finder
+        case 49 where plain: toggleQuickLook()                        // Space
+        case 51 where cmd: actions.gridTrash()                        // ⌘⌫
+        case 126 where cmd, 33 where cmd, 51 where plain: actions.gridBack() // ⌘↑, ⌘[, Delete
+        case 0 where cmd: selectAll(nil)                              // ⌘A (no Edit menu to route it)
+        case 8 where cmd: actions.gridCopyFiles()                     // ⌘C
+        case 8 where cmdShift: actions.gridCopyText()                 // ⌘⇧C
+        case 3 where cmd: actions.gridFocusSearch(typing: nil)        // ⌘F
+        case 24 where cmd || cmdShift: actions.gridResizeIcons(+1)    // ⌘= / ⌘+
+        case 27 where cmd: actions.gridResizeIcons(-1)                // ⌘-
         default:
-            super.keyDown(with: event)
+            if flags.isDisjoint(with: [.command, .control, .option]),
+               let characters = event.characters, Self.isTypeable(characters) {
+                actions.gridFocusSearch(typing: characters)
+            } else {
+                super.keyDown(with: event) // arrow keys etc.
+            }
+        }
+    }
+
+    /// Printable text only — not arrows/function keys (U+F700…) or controls.
+    private static func isTypeable(_ characters: String) -> Bool {
+        !characters.isEmpty && characters.unicodeScalars.allSatisfy {
+            $0.value < 0xF700 && !CharacterSet.controlCharacters.contains($0)
         }
     }
 
@@ -292,10 +399,23 @@ final class DownloadsCollectionView: NSCollectionView, QLPreviewPanelDataSource,
             if !selectionIndexPaths.contains(indexPath) {
                 selectionIndexPaths = [indexPath]
             }
-            onOpen?()
+            actions?.gridOpen()
             return
         }
         super.mouseDown(with: event)
+    }
+
+    /// Right-click acts on the clicked item (selecting it first if needed),
+    /// or on the folder when clicking empty space — as in Finder.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        if let indexPath = indexPathForItem(at: convert(event.locationInWindow, from: nil)) {
+            if !selectionIndexPaths.contains(indexPath) {
+                selectionIndexPaths = [indexPath]
+            }
+        } else {
+            deselectAll(nil)
+        }
+        return actions?.gridContextMenu()
     }
 
     // MARK: Quick Look
@@ -303,7 +423,7 @@ final class DownloadsCollectionView: NSCollectionView, QLPreviewPanelDataSource,
     func toggleQuickLook() {
         if QLPreviewPanel.sharedPreviewPanelExists(), QLPreviewPanel.shared().isVisible {
             QLPreviewPanel.shared().orderOut(nil)
-        } else if !selectedURLs().isEmpty {
+        } else if !(actions?.gridSelectedURLs() ?? []).isEmpty {
             QLPreviewPanel.shared().makeKeyAndOrderFront(nil)
         }
     }
@@ -326,11 +446,11 @@ final class DownloadsCollectionView: NSCollectionView, QLPreviewPanelDataSource,
     }
 
     func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
-        selectedURLs().count
+        actions?.gridSelectedURLs().count ?? 0
     }
 
     func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> (any QLPreviewItem)! {
-        let urls = selectedURLs()
+        let urls = actions?.gridSelectedURLs() ?? []
         return urls.indices.contains(index) ? urls[index] as NSURL : nil
     }
 

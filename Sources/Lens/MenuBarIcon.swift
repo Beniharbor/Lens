@@ -5,6 +5,12 @@ import AppKit
 /// image. Template rendering lets macOS tint it white/black to match the
 /// menu bar, like the built-in status icons.
 enum MenuBarIcon {
+    /// The raw (black, single-colour) Lens mark from LensMark.svg.
+    static func markSVG() -> NSImage? {
+        guard let url = Bundle.module.url(forResource: "LensMark", withExtension: "svg") else { return nil }
+        return NSImage(contentsOf: url)
+    }
+
     static let mark: NSImage = {
         guard let url = Bundle.module.url(forResource: "LensMark", withExtension: "svg"),
               let svg = NSImage(contentsOf: url) else {

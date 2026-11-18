@@ -3,8 +3,10 @@ import AppKit
 /// Lens's Dock tile: the system's blue folder with the Lens mark debossed
 /// into it, in place of the Downloads arrow. Built at runtime from the
 /// current OS folder artwork, so it matches whatever macOS version it's on.
+// No Bundle.module here: Scripts/make-app-icon.sh compiles this file on its own
+// to render Resources/Lens.icns.
 enum DockIcon {
-    static func make(mark: NSImage? = loadMark()) -> NSImage {
+    static func make(mark: NSImage?) -> NSImage {
         let side: CGFloat = 1024
         let canvas = NSRect(x: 0, y: 0, width: side, height: side)
         let folder = NSWorkspace.shared.icon(for: .folder)
@@ -31,11 +33,6 @@ enum DockIcon {
                 .draw(in: markRect)
             return true
         }
-    }
-
-    static func loadMark() -> NSImage? {
-        guard let url = Bundle.module.url(forResource: "LensMark", withExtension: "svg") else { return nil }
-        return NSImage(contentsOf: url)
     }
 
     /// Recolors a single-color (black) image, keeping its alpha.
