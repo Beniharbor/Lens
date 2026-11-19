@@ -1,6 +1,24 @@
-# Lens
+<p align="center">
+  <img src="Resources/Icon.svg" width="96" alt="Lens icon">
+</p>
 
-A Mac utility with two jobs:
+<h1 align="center">Lens</h1>
+
+<p align="center">
+  <b>Copy text from anywhere on screen, and a Downloads stack that actually lets you multi-select.</b><br>
+  A small native macOS utility. Fully local, with no network calls.
+</p>
+
+<p align="center">
+  <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-black?logo=apple">
+  <img alt="Swift" src="https://img.shields.io/badge/Swift-5.9-F05138?logo=swift&logoColor=white">
+  <img alt="On-device OCR" src="https://img.shields.io/badge/OCR-Apple%20Vision-555">
+  <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-blue">
+</p>
+
+---
+
+Lens is a Mac utility with two jobs:
 
 1. **Copy text from the screen.** Select a screen region like a normal
    screenshot, but instead of an image you get the text inside it, copied
@@ -82,6 +100,16 @@ Integrity Protection. Lens replaces it instead.
 - **Downloads / Desktop / Documents** — macOS asks once per folder the first
   time the grid shows it.
 
+## Install
+
+Requires macOS 14 or later and Xcode Command Line Tools (full Xcode isn't needed).
+
+```sh
+git clone https://github.com/Beniharbor/Lens.git
+cd Lens
+Scripts/package.sh release install   # builds, copies to /Applications, launches
+```
+
 ## Build
 
 No Xcode project — Swift Package Manager + manual `.app` bundling.
@@ -97,3 +125,7 @@ Scripts/make-app-icon.sh            # regenerate Resources/Lens.icns (folder + L
 Line Tools alone: `#Preview` blocks are stripped, and the unused
 `globalKeyboardShortcut` modifier is compiled out (`@State` is a macro whose
 plugin ships only with Xcode).
+
+## License
+
+[MIT](LICENSE)
